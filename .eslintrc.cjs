@@ -12,6 +12,7 @@ module.exports = defineConfig({
   ],
   parser: '@typescript-eslint/parser',
   rules: {
+    'no-use-before-define': 'off',
     'node/no-missing-import': ['error', {
       tryExtensions: ['.ts', '.js'],
     }],
@@ -21,12 +22,21 @@ module.exports = defineConfig({
       singleline: { delimiter: 'comma' },
     }],
     '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports' }],
+    '@typescript-eslint/no-use-before-define': ['error'],
   },
+  ignorePatterns: ['**/*.js'],
   overrides: [{
     files: ['.eslintrc.cjs', 'src/node/**'],
     env: { node: true },
   }, {
     files: ['src/client/**'],
     env: { browser: true },
+  }, {
+    files: ['scripts/**'],
+    env: { node: true },
+    rules: {
+      'node/no-unpublished-import': 'off',
+      'no-process-exit': 'off',
+    },
   }],
 })

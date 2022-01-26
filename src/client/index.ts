@@ -1,0 +1,1 @@
+export { CLIENT } from '../shared'
