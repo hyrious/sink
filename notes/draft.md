@@ -1,106 +1,81 @@
-## 状态同步协议
+CRDT 是一系列实现了同步的数据结构，\
+数据结构是一些形状 `interface (without method)` 和相关的操作算法 `function`，\
+例如 Yjs 总结出了一个双链表形状上的同步插入删除算法。
 
-通常来说，我们可能定义一个应用的状态为树状结构，但是这样一来我们不仅要处理无限层的状态更新，而且还要考虑到如何实现轻量的「移动节点」功能。例如，假设我们要为一个普通的 TodoApp 添加拖动行排序功能，朴素的想法是把整个列表重新赋值，但是这样一来很有可能把其他人正在进行的修改覆盖掉。很容易想到，正确的实现是维护一个链表，而移动节点实现为修改某些节点的前驱和后继。以此为切入点，我们可以得出正确的应用状态应该是这样的：
+客户端发送和接收的是操作 `operation`，每个操作带有 `[client, clock]` 用于排序，\
+通常来说，操作的目标是 CRDT 里的形状，为了准确标识目标，目标本身也有唯一 ID。
 
-```ts
-// 每一个状态节点都有一个唯一 ID
-ID => data = scalar           // 简单值，如 true, false, 123, "hello"
-           | { key: value }   // 复杂的状态，用一层的 key-value 表示
-```
-
-只有 scalar 的我们并不陌生，其实就是 redis 那种纯 KV 存储。为什么要再添加一个一层的 KV 呢？因为基于这个有限的结构我们可以实现出类似树、链表、图等各种复杂的结构。在 redis 等 KV 数据库中，这种结构可以表现为 key &rArr; json(value)，因此实现上也并不困难。
-
-### 根状态
-
-很快你会发现，由于这个模型长得并不像「树」，存在一个唯一的根节点变得可有可无了。我们可以根据应用需求，自定义一个特殊的 ID 为根节点。这需要所有客户端同意使用一个常量，而不需要服务器做特别的支持。
-
-### 唯一 ID
-
-生成唯一 ID 的算法满大街都是，不过这里还是提醒一下，在有中心的服务中，可以靠「会话 ID」+「自增计数器」来实现此功能，其中「会话 ID」由服务器在第一次连接时分配。
+因此我们的抽象大概如下：
 
 ```ts
-type ID = [session: number, counter: number]
-```
-
-都使用 `int32` 的话，这个结构也就 8 个字节。
-
-#### 会话保持
-
-网络不稳定是很常见的，如果每次连接都要重新分配会话 ID，相当于新用户，那么我们将很容易丢失一些重要的中间状态。例如，在一个编辑文本文档的应用中，用户刚输入的文本也许会因为断线，不会立刻同步到服务器，此时如果直接切到一个新用户，那么上一个用户（其实还是同一个人）的编辑就会丢失，他可能会看到自己的修改被<q>撤回</q>了。如果粗暴地把前一个会话的暂存操作都拿过来重放，那么就相当于他在重连的一瞬间执行了这些操作，此时如果有另一个人也在编辑，这一瞬间的操作有可能将另一个人的操作打乱。因此，我们有必要在这里假装一个更长的 TCP 连接，并且保证修改队列总是按顺序交给服务器处理的。
-
-```ts
-type OpQueue = (Transaction | Op)[]
-```
-
-### 事务
-
-状态修改往往是原子操作，但是有一些功能是需要同时修改多个值来实现的。例如，上文中提到的移动节点就需要同时修改至少 2 个节点的前后继属性。因此，有必要存在事务性修改，必须保证里面的每个子操作都成功。
-
-```ts
-type Transaction = Op[]
-```
-
-### 修改状态
-
-```ts
-type Op = { set:       ID,              value: any }
-        | { set_key:   ID, key: string, value: any }
-        | { del:       ID                          }
-        | { del_key:   ID, key: string             }
-```
-
-#### 队列
-
-所有修改操作都按顺序存放在一个队列里，并且依赖服务器排序来保证多客户端的一致性。我们可以给每个操作（包括事务性操作）定义「阶段」，在队列里的都是还没被服务器处理完的操作，有可能需要重排来保证一致。处理完的操作都可以从队列里删除。
-
-```ts
-const queue: OpQueue = []
-
-on('commit', (op) => {
-  queue.push(op)
-  send_op_to_server(op)
-})
-
-on('receive-op-from-server', (op) => {
-  if (queue[0].id === op.id) {
-    replace_op_with(op, queue.shift())
-  } else {
-    insert_op_before_queue(op, queue)
-  }
-})
-
-function replace_op_with(op, old_op) {
-  undo(old_op)
-  redo(op)
+// 一个同步的对象
+interface Item {
+  id: Identifier // 标记对象的唯一，通常是随机生成的
+                 // Yjs 里让这个字段直接是 client + clock，从而降低了很多内存消耗
 }
 
-function insert_op_before_queue(op, queue) {
-  queue.reverseForEach(undo)
-  redo(op)
-  queue.forEach(redo)
+// 一个同步的计数器，操作：inc, dec
+interface AtomItem extends Item {
+  value: number
+}
+
+// 一个同步的双链表节点，操作：insert, remove
+interface ListItem extends Item {
+  left: Identifier
+  right: Identifier
+  origin: Identifier      // 目标插入的位置，通常 <= left，用来进行冲突处理
+  originRight: Identifier // 同上
+}
+
+// 一个同步的有序树节点，操作：insert, remove
+interface TreeItem extends Item {
+  parent: Identifier
+  fraction:
+    [num: number, denom: number] // 基于 evanw 描述的浅树排序算法
+                                 // 虽然他是在服务器上解决的冲突，但是客户端（已知操作顺序时）也可以实现
 }
 ```
 
-注意到，服务器有可能返回一个相同 ID 但修改过内容的 op。你可以认为这是某种 OT，不过这里仅发生于需要保持某些形状时。例如，我们已经维护了一个链表结构，如果同时有两个客户端在同一个位置插入节点，会发生什么？
-
-```js
---- 1 --- 2 --- 3 ---
-       ^ client A: insert '4' between '1' and '2'
-       ^ client B: insert '5' between '1' and '2'
-```
-
-如果按上文的实现，最终状态很有可能是 `--- 1 --- 5 --- 2 --- 3 ---`，A 的操作被丢弃了。这是由于在服务器看来，这些节点都是孤立的，没什么特别，但是我们希望可以像普通的链表一样实现插入两次。因此，如果事先告诉服务器 `1 --- 2` 之间形成链表关系，那么在 B 的操作到达时，服务器可以发现 1, 2 之间已经存在其他的节点，可以修改该操作，将其插入到 1 右边或者 2 左边。这种「额外信息」只需要在每个操作上添加即可，例如，定义一个特殊的「插入链表」操作，他会自动保证这种形状：
-
 ```ts
-type Op = ...
-        | { insert_after: ID, value: any, before: ID }
-        // 如果 insert_after 后面不是 before，那么往 before 前面插入该节点
-        | { delete_list_node: ID }
-        // 考虑链表结构的删除操作，交给后端而不是通过 transaction 实现
+// 一次广播的操作
+interface Operation {
+  id: [client: number, clock: number] // 用于操作排序
+  method: string // 是的，就是 RPC，不过这里只保证 method 会调用，不会保证调用的顺序
+  args: any[]
+}
+
+interface OpNew extends Operation {
+  method: 'new'
+  args: [item: Item]
+}
+
+interface OpDel extends Operation {
+  method: 'del'
+  args: [id: Identifier]
+}
+
+interface OpInc extends Operation {
+  method: 'inc'
+  args: [id: Identifier, amount: number]
+}
+
+interface OpInsert extends Operation {
+  method: 'list-insert'
+  args: [id: Identifier, origin: Identifier, originRight: Identifier]
+}
+
+interface OpRemove extends Operation {
+  method: 'list-remove'
+  args: [id: Identifier]
+}
+
+interface OpAttach extends Operation {
+  method: 'tree-attach'
+  args: [id: Identifier, parent: Identifier, fraction: [num: number, denom: number]]
+}
+
+interface OpDetach extends Operation {
+  method: 'tree-Detach'
+  args: [id: Identifier]
+}
 ```
-
-由于这种需求和具体数据的形状有关，他总是可以被枚举干净的。
-
-#### 离线队列
-
-应用并不总是在线的，假设进入到并未建立好连接或者已经断线很久的状态，此时应当视为离线。但是离线不代表不可以继续使用。此时理想情况是退化到 git 模型：将本地修改存储成一个或几个 commit，等连线时 merge。不过，并非所有文档都可以使用这个方案，只有文本类的可以对细节进行 merge，其他的只能选择全盘接受一个服务器的或者本地的状态。
