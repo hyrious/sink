@@ -6,6 +6,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "useUnknownInCatchVariables": false,
-    "lib": ["ESNext"]
+    "lib": ["ESNext"],
+    "downlevelIteration": true
   }
 }

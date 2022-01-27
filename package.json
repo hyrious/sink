@@ -32,5 +32,8 @@
     "eslint-define-config": "^1.2.3",
     "eslint-plugin-node": "^11.1.0",
     "typescript": "^4.5.5"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }
