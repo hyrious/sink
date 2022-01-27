@@ -2,6 +2,7 @@
   "editor.formatOnSave": false,
   "editor.formatOnType": false,
   "editor.codeActionsOnSave": {
-    "source.fixAll": true
-  },
+    "source.fixAll": true,
+    "source.addMissingImports": true
+  }
 }

@@ -13,9 +13,11 @@ module.exports = defineConfig({
   parser: '@typescript-eslint/parser',
   rules: {
     'no-use-before-define': 'off',
+    'no-unused-vars': 'off',
     'node/no-missing-import': ['error', {
       tryExtensions: ['.ts', '.js'],
     }],
+    '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     '@typescript-eslint/semi': ['error', 'never'],
     '@typescript-eslint/member-delimiter-style': ['error', {
       multiline: { delimiter: 'none' },
